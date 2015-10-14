@@ -2,6 +2,8 @@
 pyethapp
 ===============================
 
+I will try to fix the console function when this client is run in Docker. 
+
 .. image:: https://badges.gitter.im/Join%20Chat.svg
    :alt: Join the chat at https://gitter.im/ethereum/pyethapp
    :target: https://gitter.im/ethereum/pyethapp?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
