@@ -26,11 +26,13 @@ import config as konfig
 from db_service import DBService
 from jsonrpc import JSONRPCServer
 from pow_service import PoWService
-from accounts import AccountsService, Account, DEFAULT_COINBASE
+from accounts import AccountsService, Account
 from pyethapp import __version__
 from pyethapp.profiles import PROFILES, DEFAULT_PROFILE
-from pyethapp.utils import update_config_from_genesis_json, merge_dict, load_contrib_services
+from pyethapp.utils import merge_dict, load_contrib_services
+from pyethapp.jsonrpc import LogFilter
 import utils
+from ethereum.utils import normalize_address
 
 log = slogging.get_logger('app')
 
@@ -48,13 +50,14 @@ class EthApp(BaseApp):
     default_config = dict(BaseApp.default_config)
     default_config['client_version_string'] = client_version_string
     default_config['post_app_start_callback'] = None
+    script_globals = {}
 
 
 # Separators should be underscore!
 @click.group(help='Welcome to {}  version: {}'.format(EthApp.client_name, EthApp.client_version))
 @click.option('--profile', type=click.Choice(PROFILES.keys()), default=DEFAULT_PROFILE,
               help="Configuration profile.", show_default=True)
-@click.option('alt_config', '--Config', '-C', type=click.File(), help='Alternative config file')
+@click.option('alt_config', '--Config', '-C', type=str, help='Alternative config file')
 @click.option('config_values', '-c', multiple=True, type=str,
               help='Single configuration parameters (<param>=<value>)')
 @click.option('-d', '--data-dir', multiple=False, type=str,
@@ -96,7 +99,6 @@ def app(ctx, profile, alt_config, config_values, data_dir, log_config, bootstrap
     # add default config
     konfig.update_config_with_defaults(config, konfig.get_default_config([EthApp] + services))
 
-    log.DEV("Move to EthApp.default_config")
     konfig.update_config_with_defaults(config, {'eth': {'block': blocks.default_config}})
 
     # Set config values based on profile selection
@@ -115,7 +117,7 @@ def app(ctx, profile, alt_config, config_values, data_dir, log_config, bootstrap
                                '(example: "-c jsonrpc.port=5000")')
 
     # Load genesis config
-    update_config_from_genesis_json(config, config['eth']['genesis'])
+    konfig.update_config_from_genesis_json(config, genesis_json_filename=config['eth']['genesis'])
 
     if bootstrap_node:
         config['discovery']['bootstrap_nodes'] = [bytes(bootstrap_node)]

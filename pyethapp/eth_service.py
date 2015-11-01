@@ -39,7 +39,7 @@ def apply_transaction(block, tx):
     log.debug('apply_transaction ctx switch', tx=tx.hash.encode('hex')[:8])
     gevent.sleep(0.001)
     return processblock_apply_transaction(block, tx)
-processblock.apply_transaction = apply_transaction
+#processblock.apply_transaction = apply_transaction
 
 
 rlp_hash_hex = lambda data: encode_hex(sha3(rlp.encode(data)))
@@ -171,11 +171,7 @@ class ChainService(WiredService):
         return False
 
     def _on_new_head(self, block):
-        # DEBUG('new head cbs', len(self.on_new_head_cbs))
-
-        # relase the lock, so that the cb, can create transactions
-        # this is safe, as all transactions are added already
-        self.add_transaction_lock.release()
+        log.debug('new head cbs', num=len(self.on_new_head_cbs))
         for cb in self.on_new_head_cbs:
             cb(block)
         self._on_new_head_candidate()  # we implicitly have a new head_candidate
@@ -185,10 +181,10 @@ class ChainService(WiredService):
         for cb in self.on_new_head_candidate_cbs:
             cb(self.chain.head_candidate)
 
-    def add_transaction(self, tx, origin=None, broadcast_only=False):
-        if self.is_syncing and not broadcast_only:
+    def add_transaction(self, tx, origin=None):
+        if self.is_syncing:
             return  # we can not evaluate the tx based on outdated state
-        log.debug('add_transaction', locked=self.add_transaction_lock.locked(), tx=tx)
+        log.debug('add_transaction', locked=(not self.add_transaction_lock.locked()), tx=tx)
         assert isinstance(tx, Transaction)
         assert origin is None or isinstance(origin, BaseProtocol)
 
@@ -204,8 +200,6 @@ class ChainService(WiredService):
         except InvalidTransaction as e:
             log.debug('invalid tx', error=e)
             return
-        if broadcast_only:
-            return True
 
         if origin is not None:  # not locally added via jsonrpc
             if not self.is_mining or self.is_syncing:
@@ -357,13 +351,15 @@ class ChainService(WiredService):
         assert isinstance(proto, self.wire_protocol)
         # register callbacks
         proto.receive_status_callbacks.append(self.on_receive_status)
+        proto.receive_newblockhashes_callbacks.append(self.on_newblockhashes)
         proto.receive_transactions_callbacks.append(self.on_receive_transactions)
         proto.receive_getblockhashes_callbacks.append(self.on_receive_getblockhashes)
         proto.receive_blockhashes_callbacks.append(self.on_receive_blockhashes)
         proto.receive_getblocks_callbacks.append(self.on_receive_getblocks)
         proto.receive_blocks_callbacks.append(self.on_receive_blocks)
         proto.receive_newblock_callbacks.append(self.on_receive_newblock)
-        proto.receive_newblockhashes_callbacks.append(self.on_newblockhashes)
+        proto.receive_getblockhashesfromnumber_callbacks.append(
+            self.on_receive_getblockhashesfromnumber)
 
         # send status
         head = self.chain.head
@@ -484,33 +480,47 @@ class ChainService(WiredService):
         log.debug("recv newblock", block=block, remote_id=proto)
         self.synchronizer.receive_newblock(proto, block, chain_difficulty)
 
-    def on_receive_getblockheaders(self, proto, blockhashes):
+    def on_receive_getblockhashesfromnumber(self, proto, number, count):
         log.debug('----------------------------------')
-        log.debug("on_receive_getblockheaders", count=len(blockhashes))
+        log.debug("recv getblockhashesfromnumber", number=number, remote_id=proto)
         found = []
-        for bh in blockhashes[:self.wire_protocol.max_getblocks_count]:
-            try:
-                found.append(rlp.encode(rlp.decode(self.chain.db.get(bh))[0]))
-            except KeyError:
-                log.debug("unknown block requested", block_hash=encode_hex(bh))
-        if found:
-            log.debug("found", count=len(found))
-            proto.send_blockheaders(*found)
+        count = min(count, self.wire_protocol.max_getblockhashes_count)
+        for i in range(number, number + count):
+            h = self.chain.index.get_block_by_number(i)
+            if not h:
+                break
+            found.append(h)
+        log.debug("sending: found block_hashes", count=len(found))
+        proto.send_blockhashes(*found)
+        return
 
-    def on_receive_blockheaders(self, proto, transient_blocks):
-        log.debug('----------------------------------')
-        pass
-        # TODO: implement headers first syncing
+    # def on_receive_getblockheaders(self, proto, blockhashes):
+    #     log.debug('----------------------------------')
+    #     log.debug("on_receive_getblockheaders", count=len(blockhashes))
+    #     found = []
+    #     for bh in blockhashes[:self.wire_protocol.max_getblocks_count]:
+    #         try:
+    #             found.append(rlp.encode(rlp.decode(self.chain.db.get(bh))[0]))
+    #         except KeyError:
+    #             log.debug("unknown block requested", block_hash=encode_hex(bh))
+    #     if found:
+    #         log.debug("found", count=len(found))
+    #         proto.send_blockheaders(*found)
 
-    def on_receive_hashlookup(self, proto, hashes):
-        found = []
-        for h in hashes:
-            try:
-                found.append(utils.encode_hex(self.chain.db.get(
-                             'node:' + utils.decode_hex(h))))
-            except KeyError:
-                found.append('')
-        proto.send_hashlookupresponse(h)
+    # def on_receive_blockheaders(self, proto, transient_blocks):
+    #     log.debug('----------------------------------')
+    #     pass
+    # TODO: implement headers first syncing
 
-    def on_receive_hashlookupresponse(self, proto, hashresponses):
-        pass
+    # def on_receive_hashlookup(self, proto, hashes):
+    #     found = []
+    #     for h in hashes:
+    #         try:
+    #             found.append(utils.encode_hex(self.chain.db.get(
+    #                          'node:' + utils.decode_hex(h))))
+    #         except KeyError:
+    #             found.append('')
+    #     proto.send_hashlookupresponse(h)
+
+    # def on_receive_hashlookupresponse(self, proto, hashresponses):
+    #     pass

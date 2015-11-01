@@ -1,13 +1,8 @@
 from collections import Mapping
-import json
-import yaml
 import os
 import ethereum
 from ethereum.blocks import Block, genesis
-from ethereum.keys import decode_hex
-from ethereum.utils import parse_int_or_hex, remove_0x_head
 from devp2p.service import BaseService
-import re
 import rlp
 import sys
 from ethereum import slogging
@@ -51,34 +46,33 @@ def load_contrib_services(config):  # FIXME
                     contrib_services.append(cls)
             if variable == 'on_block':
                 on_block = getattr(module, variable)
-            if variable  == 'on_start':
+            if variable == 'on_start':
                 on_start = getattr(module, variable)
         if on_start or on_block:
-            contrib_services.append(OnBlockClassFactory(on_start, on_block))
+            contrib_services.append(on_block_callback_service_factory(on_start, on_block))
     log.info('Loaded contrib services', services=contrib_services)
-    print contrib_services
     return contrib_services
 
-services_registered = 0
 
-def OnBlockClassFactory(on_start, on_block):
-    global services_registered
-    x = [services_registered]
-    services_registered += 1
-    class MyService(BaseService):
-    
-        name = 'factory generated service %d' % x[0]
-    
+def on_block_callback_service_factory(on_start, on_block):
+
+    class _OnBlockCallbackService(BaseService):
+
+        name = 'onblockservice%d' % on_block_callback_service_factory.created
+
         def start(self):
-            super(MyService, self).start()
+            super(_OnBlockCallbackService, self).start()
             self.app.services.chain.on_new_head_cbs.append(self.cb)
             if on_start:
                 on_start(self.app)
-    
+
         def cb(self, blk):
             if on_block:
                 on_block(blk)
-    return MyService
+    on_block_callback_service_factory.created += 1
+    return _OnBlockCallbackService
+
+on_block_callback_service_factory.created = 0
 
 
 def load_block_tests(data, db):
@@ -112,25 +106,6 @@ def load_block_tests(data, db):
         block = rlp.decode(rlpdata, Block, db=db, parent=parent)
         blocks[block.hash] = block
     return sorted(blocks.values(), key=lambda b: b.number)
-
-
-def update_config_from_genesis_json(config, genesis_json_filename):
-    with open(genesis_json_filename, "r") as genesis_json_file:
-        genesis_dict = yaml.load(genesis_json_file)
-
-    config.setdefault('eth', {}).setdefault('block', {})
-    cfg = config['eth']['block']
-    cfg['GENESIS_INITIAL_ALLOC'] = genesis_dict['alloc']
-    cfg['GENESIS_DIFFICULTY'] = parse_int_or_hex(genesis_dict['difficulty'])
-    cfg['GENESIS_TIMESTAMP'] = parse_int_or_hex(genesis_dict['timestamp'])
-    cfg['GENESIS_EXTRA_DATA'] = decode_hex(remove_0x_head(genesis_dict['extraData']))
-    cfg['GENESIS_GAS_LIMIT'] = parse_int_or_hex(genesis_dict['gasLimit'])
-    cfg['GENESIS_MIXHASH'] = decode_hex(remove_0x_head(genesis_dict['mixhash']))
-    cfg['GENESIS_PREVHASH'] = decode_hex(remove_0x_head(genesis_dict['parentHash']))
-    cfg['GENESIS_COINBASE'] = decode_hex(remove_0x_head(genesis_dict['coinbase']))
-    cfg['GENESIS_NONCE'] = decode_hex(remove_0x_head(genesis_dict['nonce']))
-
-    return config
 
 
 def merge_dict(dest, source):
